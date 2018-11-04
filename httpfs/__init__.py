@@ -64,7 +64,7 @@ class File(Path):
         url = self.buildUrl()
         logger.info("File url={} name={}".format(url, self.name))
         r = self.getSession().head(url, timeout=Config.timeout,
-                                   allow_redirects=True)
+                                   allow_redirects=True, headers={"Accept-Encoding": ""})
         r.close()
         if r.status_code >= 400 and r.status_code <= 499:
             self.size = 0
@@ -121,12 +121,16 @@ class File(Path):
             logger.info("Received {} bytes".format(len(d)))
             if len(d) > size:
                 errormsg = "size {} > than expected {}".format(len(d), size)
-                logger.error(errormsg)
-                raise fuse.FuseOSError(EIO)
+                logger.warning(errormsg)
+                # raise fuse.FuseOSError(EIO)
+                # Assuming no range support
+                d = d[offset:offset + size]
 
             if _prefetch:
                 logger.info("Prefetch finished for url={} offset={}".format(url, offset))
                 for i in range(1, _prefetch_scale):
+                    if i * 131072 > len(d):
+                        break
                     self.cache[url][offset + i * 131072] = d[i * 131072: (i + 1) * 131072]
                 d = d[:131072]
 
