@@ -58,6 +58,7 @@ class File(Path):
         self.lastModified = None
         self.size = None
         self.mode = 0o444
+        self.cache = {}
 
     def init(self):
         url = self.buildUrl()
@@ -84,6 +85,32 @@ class File(Path):
         if not self.initialized:
             self.init()
         url = self.buildUrl()
+
+        _prefetch_scale = 50
+        _prefetch = False
+        if size == 131072:
+            _prefetch = True
+            if offset in self.cache.get(url, {}):
+                _waiting = 0
+                while self.cache[url].get(offset) is None and _waiting < 5:
+                    time.sleep(0.05)
+                    _waiting += 0.05
+                if self.cache[url].get(offset) is not None:
+                    logger.info("Prefetch cache hit for url={} offset={}".format(url, offset))
+                    d = self.cache[url][offset]
+                    del self.cache[url][offset]
+                    return d
+                else:
+                    _prefetch = False
+
+            if _prefetch:
+                logger.info("Prefetch enabled for url={} offset={}".format(url, offset))
+                self.cache.setdefault(url, {})
+                for i in range(_prefetch_scale):
+                    self.cache[url].setdefault(offset + i * 131072, None)
+
+                size *= _prefetch_scale
+
         bytesRange = '{}-{}'.format(offset, min(self.size, offset + size - 1))
         headers = {'range': 'bytes=' + bytesRange}
         logger.info("File.get url={} range={}".format(url, bytesRange))
@@ -96,6 +123,13 @@ class File(Path):
                 errormsg = "size {} > than expected {}".format(len(d), size)
                 logger.error(errormsg)
                 raise fuse.FuseOSError(EIO)
+
+            if _prefetch:
+                logger.info("Prefetch finished for url={} offset={}".format(url, offset))
+                for i in range(1, _prefetch_scale):
+                    self.cache[url][offset + i * 131072] = d[i * 131072: (i + 1) * 131072]
+                d = d[:131072]
+
             return d
         else:
             raise fuse.FuseOSError(EIO)
